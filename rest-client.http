@@ -1,0 +1,16 @@
+
+
+### Prueba de salud del API
+GET http://localhost:8000/
+Accept: application/json
+
+###
+
+### Consulta de documento usando RAG
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "¿Qué es RAG y cuáles son sus ventajas?"
+}
