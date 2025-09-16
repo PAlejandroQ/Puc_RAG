@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="RAG Document Q&A", description="Query documents using RAG with Ollama and ChromaDB")
 
 # Configuration
-DOCUMENT_PATH = "app/document.pdf"
-COLLECTION_NAME = "document_collection2"
+DOCUMENT_PATH = "app/Codigo_Civil_split.pdf"
+COLLECTION_NAME = "codigo_civil_collection_split"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
 CHROMA_PORT = os.getenv("CHROMA_PORT", 8001)
