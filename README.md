@@ -8,7 +8,6 @@ A Retrieval-Augmented Generation (RAG) system for querying legal documents using
 - [Overview](#overview)
 - [What is RAG?](#what-is-rag)
 - [Why Ollama?](#why-ollama)
-- [Architecture](#architecture)
 - [How it Works](#how-it-works)
 - [Project Structure](#project-structure)
 - [Usage](#usage)
@@ -29,33 +28,6 @@ RAG (Retrieval-Augmented Generation) is an approach that combines information re
 ## Why Ollama?
 Ollama is chosen as the LLM backend because it offers efficient, local inference of large language models (like Llama 3) **without requiring a GPU**. This makes it ideal for running on commodity hardware (e.g., laptops, servers without dedicated GPUs), providing good performance and privacy by keeping all data and computation local.
 
-## Architecture
-
-```mermaid
-graph TD
-    User[User / Client]
-    subgraph API Layer
-        FastAPI[FastAPI (main.py)]
-    end
-    subgraph RAG Pipeline
-        Retriever[Retriever (ChromaDB)]
-        LLM[Ollama LLM]
-    end
-    PDF[PDF Document]
-    ChromaDB[ChromaDB Vector Store]
-    Ollama[Ollama Server]
-
-    User -- HTTP Request --> FastAPI
-    FastAPI -- Query --> Retriever
-    Retriever -- Embedding Search --> ChromaDB
-    FastAPI -- Context + Question --> LLM
-    LLM -- Answer --> FastAPI
-    FastAPI -- Response --> User
-    FastAPI -- Loads --> PDF
-    FastAPI -- Stores Embeddings --> ChromaDB
-    FastAPI -- Uses --> Ollama
-    Ollama -- LLM API --> FastAPI
-```
 
 ## How it Works
 1. **Document Loading**: On startup, the API loads a PDF, splits it into chunks, and creates embeddings using Ollama.
