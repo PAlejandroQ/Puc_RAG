@@ -12,26 +12,25 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import Chroma
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
-import chromadb
+from langchain_elasticsearch import ElasticsearchStore
+from elasticsearch import Elasticsearch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI app
-app = FastAPI(title="RAG Document Q&A", description="Query documents using RAG with Ollama and ChromaDB")
+app = FastAPI(title="RAG Document Q&A", description="Query documents using RAG with Ollama and Elasticsearch")
 
 # Configuration
 DOCUMENT_PATH = "app/Codigo_Civil_split.pdf"
-COLLECTION_NAME = "codigo_civil_collection_split"
+INDEX_NAME = "codigo_civil_index"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-CHROMA_HOST = os.getenv("CHROMA_HOST", "localhost")
-CHROMA_PORT = os.getenv("CHROMA_PORT", 8001)
+ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
 
 class QueryRequest(BaseModel):
     """Request model for query endpoint"""
@@ -71,15 +70,15 @@ def create_llm_model() -> Ollama:
 
 def initialize_vector_store():
     """
-    Initialize or load existing vector store with document embeddings.
+    Initialize or load existing vector store with document embeddings using Elasticsearch.
 
     This function:
-    1. Checks if collection exists in ChromaDB
+    1. Checks if the index exists in Elasticsearch
     2. If not, loads the PDF, splits it into chunks, creates embeddings, and stores them
-    3. If exists, simply connects to the existing collection
+    3. If exists, simply connects to the existing index
 
     Returns:
-        Chroma: Configured vector store
+        ElasticsearchStore: Configured vector store
     """
     try:
         logger.info("Initializing vector store...")
@@ -87,20 +86,19 @@ def initialize_vector_store():
         # Initialize embeddings model
         embeddings = create_embeddings_model()
 
-        # Connect to ChromaDB
-        chroma_client = chromadb.HttpClient(host=CHROMA_HOST, port=CHROMA_PORT)
+        # Connect to Elasticsearch
+        es_client = Elasticsearch(ELASTICSEARCH_URL)
 
-        # Check if collection exists
-        try:
-            collection = chroma_client.get_collection(COLLECTION_NAME)
-            logger.info("Found existing collection, loading vector store...")
-            vector_store = Chroma(
-                client=chroma_client,
-                collection_name=COLLECTION_NAME,
-                embedding_function=embeddings
+        # Check if index exists
+        if es_client.indices.exists(index=INDEX_NAME):
+            logger.info("Found existing index, loading vector store...")
+            vector_store = ElasticsearchStore(
+                es_url=ELASTICSEARCH_URL,
+                index_name=INDEX_NAME,
+                embedding=embeddings
             )
-        except Exception:
-            logger.info("Collection not found, creating new one...")
+        else:
+            logger.info("Index not found, creating new one...")
 
             # Load and process document
             if not Path(DOCUMENT_PATH).exists():
@@ -120,11 +118,11 @@ def initialize_vector_store():
             logger.info(f"Split into {len(chunks)} chunks")
 
             # Create vector store with embeddings
-            vector_store = Chroma.from_documents(
+            vector_store = ElasticsearchStore.from_documents(
                 documents=chunks,
                 embedding=embeddings,
-                client=chroma_client,
-                collection_name=COLLECTION_NAME
+                es_url=ELASTICSEARCH_URL,
+                index_name=INDEX_NAME
             )
             logger.info("Vector store created and populated")
 

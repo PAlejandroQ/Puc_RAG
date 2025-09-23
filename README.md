@@ -1,6 +1,6 @@
 # RAG Document Q&A API
 
-A Retrieval-Augmented Generation (RAG) system for querying legal documents using FastAPI, LangChain, Ollama, and ChromaDB. This project provides a REST API to ask questions about a PDF document, returning answers and the relevant document sources.
+A Retrieval-Augmented Generation (RAG) system for querying legal documents using FastAPI, LangChain, Ollama, and Elasticsearch. This project provides a REST API to ask questions about a PDF document, returning answers and the relevant document sources.
 
 ---
 
@@ -20,7 +20,7 @@ A Retrieval-Augmented Generation (RAG) system for querying legal documents using
 ---
 
 ## Overview
-This project implements a RAG (Retrieval-Augmented Generation) pipeline to answer questions about a legal document (e.g., civil code) using a local LLM (Ollama) and a vector database (ChromaDB). The API is built with FastAPI and orchestrated with Docker Compose for easy deployment.
+This project implements a RAG (Retrieval-Augmented Generation) pipeline to answer questions about a legal document (e.g., civil code) using a local LLM (Ollama) and a vector database (Elasticsearch). The API is built with FastAPI and orchestrated with Docker Compose for easy deployment.
 
 ## What is RAG?
 RAG (Retrieval-Augmented Generation) is an approach that combines information retrieval (searching for relevant documents or passages) with generative models (LLMs) to answer questions with up-to-date, contextually relevant information. Instead of relying solely on the LLM's internal knowledge, RAG retrieves relevant chunks from a document database and feeds them to the LLM for more accurate and grounded answers.
@@ -31,14 +31,14 @@ Ollama is chosen as the LLM backend because it offers efficient, local inference
 
 ## How it Works
 1. **Document Loading**: On startup, the API loads a PDF, splits it into chunks, and creates embeddings using Ollama.
-2. **Vector Store**: Chunks and their embeddings are stored in ChromaDB for fast similarity search.
-3. **Querying**: When a user asks a question, the API retrieves the most relevant chunks from ChromaDB.
+2. **Vector Store**: Chunks and their embeddings are stored in Elasticsearch for fast similarity search.
+3. **Querying**: When a user asks a question, the API retrieves the most relevant chunks from Elasticsearch.
 4. **LLM Generation**: The question and retrieved context are sent to Ollama, which generates an answer.
 5. **Response**: The API returns the answer and the source document chunks.
 
 ## Project Structure
 - `app/main.py`: Main FastAPI app, RAG pipeline, endpoints.
-- `docker-compose.yml`: Orchestrates Ollama, ChromaDB, and the API service.
+- `docker-compose.yml`: Orchestrates Ollama, Elasticsearch, and the API service.
 - `Dockerfile`: Builds the API service container.
 - `rest-client.http`: Example HTTP requests for testing the API.
 - `requirements.txt`: Python dependencies.
@@ -51,7 +51,7 @@ docker-compose up --build
 ```
 This will start:
 - Ollama (LLM server)
-- ChromaDB (vector database)
+- Elasticsearch (vector database)
 - The FastAPI RAG app
 
 ### 2. Test the API
@@ -92,7 +92,7 @@ graph LR
     subgraph Backend
         B[FastAPI RAG App]
         C[Ollama LLM]
-        D[ChromaDB]
+        D[Elasticsearch]
     end
     subgraph Storage
         E[PDF Document]
@@ -109,7 +109,7 @@ graph LR
 sequenceDiagram
     participant U as User
     participant API as FastAPI
-    participant V as ChromaDB
+    participant V as Elasticsearch
     participant L as Ollama
     U->>API: POST /query {question}
     API->>V: Retrieve relevant chunks
@@ -130,11 +130,13 @@ sequenceDiagram
    ```bash
    docker-compose up --build
    ```
+   This will start Ollama (LLM server), Elasticsearch (vector database), and the FastAPI RAG app.
 3. The API will be available at `http://localhost:8000/`.
 
 ---
 
 ## Notes
 - Ollama is used for both embeddings and LLM inference, ensuring all computation is local and efficient, even on machines without a GPU.
-- ChromaDB provides fast vector search for document retrieval.
+- Elasticsearch provides fast vector search for document retrieval, with hybrid search capabilities for more robust querying.
 - The system is modular and can be extended to use other LLMs or vector stores.
+- **Note on Resources**: Elasticsearch requires more RAM and CPU compared to ChromaDB, especially for larger datasets. Ensure your environment has sufficient resources (at least 4GB RAM recommended).

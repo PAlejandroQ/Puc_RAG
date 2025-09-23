@@ -8,12 +8,17 @@ services:
       - ollama_models:/root/.ollama
     restart: unless-stopped
 
-  chroma:
-    image: chromadb/chroma:latest
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
     ports:
-      - "8001:8000"
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      # - ES_JAVA_OPTS=-Xms1g -Xmx1g
     volumes:
-      - chroma_data:/chroma/chroma
+      - elasticsearch_data:/usr/share/elasticsearch/data
     restart: unless-stopped
 
   rag-app:
@@ -22,16 +27,15 @@ services:
       - "8000:8000"
     depends_on:
       - ollama
-      - chroma
+      - elasticsearch
     volumes:
       - ./app:/app
     environment:
-      - CHROMA_HOST=chroma
-      - CHROMA_PORT=8000
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
       - OLLAMA_BASE_URL=http://ollama:11434
     entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 
 volumes:
   ollama_models:
-  chroma_data:
+  elasticsearch_data:
