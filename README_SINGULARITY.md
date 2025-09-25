@@ -1,149 +1,149 @@
-# Despliegue del Sistema RAG con Singularity
+# RAG System Deployment with Singularity
 
-Este documento proporciona instrucciones detalladas para desplegar el sistema RAG (Retrieval-Augmented Generation) utilizando Singularity en entornos HPC, como alternativa funcional al despliegue con Docker Compose.
+This document provides detailed instructions to deploy the RAG (Retrieval-Augmented Generation) system using Singularity in HPC environments, as a functional alternative to Docker Compose deployment.
 
-## 📋 Tabla de Contenidos
+## 📋 Table of Contents
 
-- [Visión General](#visión-general)
-- [Requisitos del Sistema](#requisitos-del-sistema)
-- [Arquitectura del Sistema](#arquitectura-del-sistema)
-- [Instalación y Configuración](#instalación-y-configuración)
-- [Despliegue de Servicios](#despliegue-de-servicios)
-- [Uso de la API](#uso-de-la-api)
-- [Gestión de Servicios](#gestión-de-servicios)
-- [Monitoreo y Logs](#monitoreo-y-logs)
-- [Solución de Problemas](#solución-de-problemas)
-- [Comparación Docker vs Singularity](#comparación-docker-vs-singularity)
+- [Overview](#overview)
+- [System Requirements](#system-requirements)
+- [System Architecture](#system-architecture)
+- [Installation and Setup](#installation-and-setup)
+- [Service Deployment](#service-deployment)
+- [API Usage](#api-usage)
+- [Service Management](#service-management)
+- [Monitoring and Logs](#monitoring-and-logs)
+- [Troubleshooting](#troubleshooting)
+- [Docker vs Singularity Comparison](#docker-vs-singularity-comparison)
 
-## 🎯 Visión General
+## 🎯 Overview
 
-Este sistema RAG permite hacer consultas en lenguaje natural sobre documentos legales utilizando:
+This RAG system allows you to query legal documents in natural language using:
 
-- **Ollama**: Modelo de lenguaje local (Llama 3) para generación de respuestas
-- **Elasticsearch**: Motor de búsqueda vectorial para recuperación de documentos relevantes
-- **FastAPI**: API REST para interactuar con el sistema
-- **LangChain**: Framework para orquestar el pipeline RAG
+- **Ollama**: Local language model (Llama 3) for answer generation
+- **Elasticsearch**: Vector search engine for retrieving relevant documents
+- **FastAPI**: REST API for system interaction
+- **LangChain**: Framework to orchestrate the RAG pipeline
 
-## 🖥️ Requisitos del Sistema
+## 🖥️ System Requirements
 
-### Hardware Mínimo Recomendado
-- **CPU**: 4+ núcleos
-- **RAM**: 8GB (16GB recomendado)
-- **Almacenamiento**: 10GB disponibles
-- **Red**: Conectividad a internet para descarga inicial de modelos
+### Minimum Recommended Hardware
+- **CPU**: 4+ cores
+- **RAM**: 8GB (16GB recommended)
+- **Storage**: 10GB available
+- **Network**: Internet connectivity for initial model download
 
-### Software Requerido
-- **Singularity**: Versión 3.7+
-- **curl/wget**: Para verificaciones de conectividad
-- **bash**: Shell compatible con bash
+### Required Software
+- **Singularity**: Version 3.7+
+- **curl/wget**: For connectivity checks
+- **bash**: Bash-compatible shell
 
-### Verificación de Requisitos
+### Requirements Check
 ```bash
-# Verificar Singularity
+# Check Singularity
 singularity --version
 
-# Verificar recursos del sistema
+# Check system resources
 echo "CPU: $(nproc) cores"
 echo "RAM: $(free -h | awk 'NR==2{printf "%.1fG", $2/1024}')"
 echo "Disk: $(df -h . | awk 'NR==2{print $4}')"
 ```
 
-## 🏗️ Arquitectura del Sistema
+## 🏗️ System Architecture
 
 ```
-┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-│                 │    │                 │    │                 │
-│   Usuario       │◄──►│   FastAPI RAG   │◄──►│   Ollama LLM    │
-│                 │    │   Aplicación    │    │   (Llama 3)     │
-└─────────────────┘    └─────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌─────────────────┐
-                       │  Elasticsearch  │
-                       │  Vector Store   │
-                       └─────────────────┘
+┌───────────────┐    ┌───────────────┐    ┌───────────────┐
+│               │    │               │    │               │
+│   User        │◄──►│   FastAPI RAG │◄──►│   Ollama LLM  │
+│               │    │   Application │    │   (Llama 3)   │
+└───────────────┘    └───────────────┘    └───────────────┘
+                          │
+                          ▼
+                   ┌───────────────┐
+                   │ Elasticsearch │
+                   │  Vector Store │
+                   └───────────────┘
 ```
 
-### Mapeo de Puertos
+### Port Mapping
 - **11434**: Ollama API
 - **9200**: Elasticsearch API
 - **8000**: FastAPI RAG API
 
-### Volúmenes Persistentes
-- `ollama_data`: Modelos y configuraciones de Ollama
-- `elasticsearch_data`: Índices y datos de Elasticsearch
-- `app`: Código de la aplicación y documentos
+### Persistent Volumes
+- `ollama_data`: Ollama models and configuration
+- `elasticsearch_data`: Elasticsearch indices and data
+- `app`: Application code and documents
 
-## 🔧 Instalación y Configuración
+## 🔧 Installation and Setup
 
-### 1. Preparación del Entorno
+### 1. Environment Preparation
 ```bash
-# Clonar el repositorio
-git clone <url-del-repositorio>
+# Clone the repository
+git clone <repository-url>
 cd Puc_RAG
 
-# Dar permisos de ejecución al script
+# Make the deployment script executable
 chmod +x deploy.sh
 
-# Crear estructura de directorios
+# Create directory structure
 ./deploy.sh start
 ```
 
-### 2. Construcción de la Imagen de Singularity
+### 2. Build the Singularity Image
 ```bash
-# Construir la imagen de la aplicación RAG
+# Build the RAG application image
 singularity build rag-app.sif Singularity
 
-# Verificar que la imagen se creó correctamente
+# Verify the image was created
 ls -lh rag-app.sif
 ```
 
-### 3. Configuración de Variables de Entorno
-El sistema utiliza las siguientes variables de entorno (configuradas automáticamente):
+### 3. Environment Variable Configuration
+The system uses the following environment variables (set automatically):
 - `ELASTICSEARCH_URL=http://localhost:9200`
 - `OLLAMA_BASE_URL=http://localhost:11434`
 
-## 🚀 Despliegue de Servicios
+## 🚀 Service Deployment
 
-### Inicio Completo del Sistema
+### Start the Full System
 ```bash
-# Iniciar todos los servicios
+# Start all services
 ./deploy.sh start
 ```
 
-Este comando:
-1. ✅ Verifica la instalación de Singularity
-2. ✅ Crea directorios necesarios
-3. ✅ Inicia Ollama y descarga el modelo Llama 3
-4. ✅ Inicia Elasticsearch con configuración optimizada
-5. ✅ Espera a que los servicios estén listos
-6. ✅ Inicia la aplicación RAG
-7. ✅ Proporciona información de conexión
+This command:
+1. ✅ Checks Singularity installation
+2. ✅ Creates required directories
+3. ✅ Starts Ollama and downloads the Llama 3 model
+4. ✅ Starts Elasticsearch with optimized configuration
+5. ✅ Waits for services to be ready
+6. ✅ Starts the RAG application
+7. ✅ Provides connection information
 
-### Verificación del Despliegue
+### Deployment Verification
 ```bash
-# Verificar estado de los servicios
+# Check service status
 ./deploy.sh status
 
-# Ver logs de los servicios
+# View service logs
 ./deploy.sh logs
 ```
 
-## 🔌 Uso de la API
+## 🔌 API Usage
 
-Una vez que todos los servicios estén ejecutándose, la API estará disponible en:
+Once all services are running, the API will be available at:
 ```
 http://localhost:8000
 ```
 
-### Endpoints Disponibles
+### Available Endpoints
 
 #### 1. Health Check
 ```bash
 curl http://localhost:8000/
 ```
 
-Respuesta esperada:
+Expected response:
 ```json
 {
   "message": "RAG Document Q&A API",
@@ -151,22 +151,22 @@ Respuesta esperada:
 }
 ```
 
-#### 2. Consulta de Documentos
+#### 2. Document Query
 ```bash
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "¿En qué caso es inadmisible la sucesión del cónyuge?"
+    "question": "In what case is the spouse's succession inadmissible?"
   }'
 ```
 
-Respuesta esperada:
+Expected response:
 ```json
 {
-  "answer": "La sucesión del cónyuge es inadmisible cuando...",
+  "answer": "The spouse's succession is inadmissible when...",
   "source_documents": [
     {
-      "content": "Texto relevante del documento...",
+      "content": "Relevant document text...",
       "metadata": {
         "source": "Codigo_Civil_split.pdf",
         "page": 1
@@ -176,221 +176,221 @@ Respuesta esperada:
 }
 ```
 
-### Ejemplos de Consultas
+### Example Queries
 ```bash
-# Consulta sobre sucesión
+# Succession query
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "¿Cuáles son los requisitos para la sucesión testamentaria?"}'
+  -d '{"question": "What are the requirements for testamentary succession?"}'
 
-# Consulta sobre contratos
+# Contract query
 curl -X POST http://localhost:8000/query \
   -H "Content-Type: application/json" \
-  -d '{"question": "¿Qué es un contrato de compraventa?"}'
+  -d '{"question": "What is a sales contract?"}'
 ```
 
-## ⚙️ Gestión de Servicios
+## ⚙️ Service Management
 
-### Estados Disponibles
+### Available States
 ```bash
-# Iniciar servicios
+# Start services
 ./deploy.sh start
 
-# Detener servicios
+# Stop services
 ./deploy.sh stop
 
-# Reiniciar servicios
+# Restart services
 ./deploy.sh restart
 
-# Verificar estado
+# Check status
 ./deploy.sh status
 
-# Ver logs
+# View logs
 ./deploy.sh logs
 ```
 
-### Gestión Manual de Servicios
+### Manual Service Management
 
-#### Detención Individual
+#### Stop Individual Service
 ```bash
-# Ver PIDs activos
+# View active PIDs
 cat singularity_pids.txt
 
-# Detener un servicio específico
-kill <PID_DEL_SERVICIO>
+# Stop a specific service
+kill <SERVICE_PID>
 
-# Detener todos los servicios
+# Stop all services
 kill $(cat singularity_pids.txt)
 ```
 
-#### Verificación de Conectividad
+#### Connectivity Check
 ```bash
-# Verificar Ollama
+# Check Ollama
 curl http://localhost:11434/api/tags
 
-# Verificar Elasticsearch
+# Check Elasticsearch
 curl http://localhost:9200/_cluster/health
 
-# Verificar RAG API
+# Check RAG API
 curl http://localhost:8000/
 ```
 
-## 📊 Monitoreo y Logs
+## 📊 Monitoring and Logs
 
-### Estructura de Logs
-Los logs se organizan en el directorio `logs/`:
+### Log Structure
+Logs are organized in the `logs/` directory:
 ```
 logs/
-├── ollama.log          # Logs de Ollama
-├── elasticsearch.log   # Logs de Elasticsearch
-└── rag-app.log         # Logs de la aplicación RAG
+├── ollama.log          # Ollama logs
+├── elasticsearch.log   # Elasticsearch logs
+└── rag-app.log         # RAG application logs
 ```
 
-### Monitoreo en Tiempo Real
+### Real-Time Monitoring
 ```bash
-# Ver logs de todos los servicios
+# View all service logs
 ./deploy.sh logs
 
-# Ver logs específicos
+# View specific logs
 tail -f logs/ollama.log
 tail -f logs/elasticsearch.log
 tail -f logs/rag-app.log
 
-# Combinar logs de todos los servicios
+# Combine all logs
 tail -f logs/*.log
 ```
 
-### Logs de Systemd (si aplica)
+### Systemd Logs (if applicable)
 ```bash
-# Ver logs del sistema
+# View system logs
 journalctl -u singularity-rag -f
 
-# Ver logs con timestamps específicos
+# View logs for specific timestamps
 journalctl --since="2024-01-01 00:00:00" --until="2024-01-02 00:00:00"
 ```
 
-## 🔍 Solución de Problemas
+## 🔍 Troubleshooting
 
-### Problemas Comunes
+### Common Issues
 
-#### 1. Singularity no está instalado
+#### 1. Singularity is not installed
 ```bash
-# En Ubuntu/Debian
+# On Ubuntu/Debian
 sudo apt-get update
 sudo apt-get install singularity-container
 
-# En CentOS/RHEL
+# On CentOS/RHEL
 sudo yum install singularity
 ```
 
-#### 2. Puertos ya en uso
+#### 2. Ports already in use
 ```bash
-# Ver qué procesos usan los puertos
+# Check which processes use the ports
 netstat -tlnp | grep -E ':(11434|9200|8000)'
 
-# Matar procesos que ocupen los puertos
+# Kill processes occupying the ports
 sudo kill -9 <PID>
 ```
 
-#### 3. Modelos no se descargan
+#### 3. Models not downloading
 ```bash
-# Descargar modelo manualmente
+# Download model manually
 singularity exec docker://ollama/ollama:latest ollama pull llama3
 
-# Verificar modelos instalados
+# List installed models
 singularity exec docker://ollama/ollama:latest ollama list
 ```
 
-#### 4. Elasticsearch no inicia
+#### 4. Elasticsearch does not start
 ```bash
-# Verificar logs de Elasticsearch
+# Check Elasticsearch logs
 tail -50 logs/elasticsearch.log
 
-# Verificar permisos de directorio
+# Check directory permissions
 ls -la elasticsearch_data/
 
-# Limpiar datos de Elasticsearch (si es necesario)
+# Clean Elasticsearch data (if needed)
 rm -rf elasticsearch_data/*
 ```
 
-#### 5. Aplicación RAG no responde
+#### 5. RAG application not responding
 ```bash
-# Verificar logs de la aplicación
+# Check application logs
 tail -50 logs/rag-app.log
 
-# Verificar conectividad a servicios
+# Check service connectivity
 curl http://localhost:11434/api/tags
 curl http://localhost:9200/_cluster/health
 
-# Reiniciar solo la aplicación
+# Restart only the application
 ./deploy.sh restart
 ```
 
-### Verificación de Recursos
+### Resource Check
 ```bash
-# Monitorear uso de CPU y memoria
+# Monitor CPU and memory usage
 htop
 
-# Ver procesos de Singularity
+# View Singularity processes
 ps aux | grep singularity
 
-# Ver uso de disco
+# Check disk usage
 df -h
 du -sh ollama_data/ elasticsearch_data/ app/
 ```
 
-## ⚖️ Comparación Docker vs Singularity
+## ⚖️ Docker vs Singularity Comparison
 
-| Aspecto | Docker | Singularity |
-|---------|--------|-------------|
-| **Entorno** | Servidores, Cloud | HPC, Clusters |
-| **Usuario** | root/sudo | Usuario normal |
-| **Red** | Virtual | Host compartida |
-| **Volúmenes** | Named volumes | Bind mounts |
-| **PERSISTENCIA** | Docker volumes | Directorios host |
-| **Seguridad** | Namespaces | Cgroups opcional |
-| **GPU Support** | Nativo | Configuración específica |
+| Aspect      | Docker           | Singularity      |
+|------------|------------------|------------------|
+| **Env**    | Servers, Cloud   | HPC, Clusters    |
+| **User**   | root/sudo        | Normal user      |
+| **Network**| Virtual          | Host-shared      |
+| **Volumes**| Named volumes    | Bind mounts      |
+| **Persistence** | Docker volumes | Host directories |
+| **Security**| Namespaces       | Optional cgroups |
+| **GPU**    | Native           | Specific config  |
 
-### Ventajas de Singularity para este proyecto:
-1. ✅ **Sin privilegios**: No requiere sudo/root
-2. ✅ **Red compartida**: Comunicación directa entre servicios
-3. ✅ **HPC compatible**: Funciona en clusters y supercomputadoras
-4. ✅ **Reproducible**: Entornos consistentes entre ejecuciones
-5. ✅ **Portabilidad**: Fácil migración entre sistemas
+### Singularity Advantages for this Project:
+1. ✅ **No privileges**: Does not require sudo/root
+2. ✅ **Shared network**: Direct communication between services
+3. ✅ **HPC compatible**: Works on clusters and supercomputers
+4. ✅ **Reproducible**: Consistent environments between runs
+5. ✅ **Portable**: Easy migration between systems
 
-## 📝 Notas Importantes
+## 📝 Important Notes
 
-### Rendimiento
-- **Memoria**: Elasticsearch requiere al menos 1GB RAM
-- **CPU**: Ollama se beneficia de múltiples núcleos
-- **Red**: Baja latencia mejora la experiencia del usuario
+### Performance
+- **Memory**: Elasticsearch requires at least 1GB RAM
+- **CPU**: Ollama benefits from multiple cores
+- **Network**: Low latency improves user experience
 
-### Seguridad
-- Los contenedores comparten la red del host
-- Los datos se almacenan en directorios locales
-- No se requiere exposición de puertos externos
+### Security
+- Containers share the host network
+- Data is stored in local directories
+- No need to expose external ports
 
-### Mantenimiento
-- Los modelos de Ollama se almacenan persistentemente
-- Los índices de Elasticsearch se mantienen entre reinicios
-- Los documentos procesados no se reindexan automáticamente
+### Maintenance
+- Ollama models are stored persistently
+- Elasticsearch indices are kept between restarts
+- Processed documents are not automatically re-indexed
 
-### Backup y Recuperación
+### Backup and Recovery
 ```bash
-# Backup de datos
+# Backup data
 tar -czf rag-backup-$(date +%Y%m%d).tar.gz ollama_data/ elasticsearch_data/
 
-# Restaurar datos
+# Restore data
 tar -xzf rag-backup-*.tar.gz
 ```
 
-## 📞 Soporte
+## 📞 Support
 
-Para problemas específicos:
-1. Verificar logs: `./deploy.sh logs`
-2. Verificar estado: `./deploy.sh status`
-3. Revisar sección de solución de problemas
-4. Contactar al equipo de desarrollo con logs completos
+For specific issues:
+1. Check logs: `./deploy.sh logs`
+2. Check status: `./deploy.sh status`
+3. Review the troubleshooting section
+4. Contact the development team with full logs
 
 ---
-*Este sistema RAG está optimizado para entornos HPC y proporciona una alternativa robusta al despliegue tradicional con Docker.*
+*This RAG system is optimized for HPC environments and provides a robust alternative to traditional Docker deployment.*

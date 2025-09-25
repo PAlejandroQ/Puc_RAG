@@ -1,17 +1,17 @@
 #!/bin/bash
 
 # =============================================================================
-# Script de Pruebas para API RAG con Singularity
+# Test Script for RAG API with Singularity
 # =============================================================================
-# Este script proporciona ejemplos de uso de la API RAG una vez desplegada
-# con Singularity.
+# This script provides usage examples for the RAG API once deployed
+# with Singularity.
 #
-# Uso: ./test_api.sh [health|query|interactive]
+# Usage: ./test_api.sh [health|query|interactive]
 # =============================================================================
 
 set -e
 
-# Colores para output
+# Output colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -20,16 +20,16 @@ NC='\033[0m' # No Color
 
 API_BASE_URL="http://localhost:8000"
 
-# Verificar si la API está disponible
+# Check if the API is available
 check_api() {
-    echo -e "${BLUE}Verificando conectividad con la API RAG...${NC}"
+    echo -e "${BLUE}Checking connectivity with the RAG API...${NC}"
 
     if curl -s "${API_BASE_URL}/" > /dev/null 2>&1; then
-        echo -e "${GREEN}✓ API RAG está disponible en ${API_BASE_URL}${NC}"
+        echo -e "${GREEN}✓ RAG API is available at ${API_BASE_URL}${NC}"
         return 0
     else
-        echo -e "${RED}✗ API RAG no está disponible en ${API_BASE_URL}${NC}"
-        echo -e "${YELLOW}Asegúrese de que el sistema esté desplegado con: ./deploy.sh start${NC}"
+        echo -e "${RED}✗ RAG API is not available at ${API_BASE_URL}${NC}"
+        echo -e "${YELLOW}Make sure the system is deployed with: ./deploy.sh start${NC}"
         return 1
     fi
 }
@@ -40,42 +40,42 @@ health_check() {
 
     response=$(curl -s "${API_BASE_URL}/")
 
-    echo -e "${GREEN}Respuesta del servidor:${NC}"
+    echo -e "${GREEN}Server response:${NC}"
     echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
 }
 
-# Consulta simple
+# Simple query
 query_document() {
     local question="$1"
 
-    echo -e "${BLUE}=== Consulta: $question ===${NC}"
+    echo -e "${BLUE}=== Query: $question ===${NC}"
 
     response=$(curl -s -X POST "${API_BASE_URL}/query" \
         -H "Content-Type: application/json" \
         -d "{\"question\": \"$question\"}")
 
     if [ $? -eq 0 ]; then
-        echo -e "${GREEN}Respuesta:${NC}"
+        echo -e "${GREEN}Response:${NC}"
         echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
     else
-        echo -e "${RED}Error al hacer la consulta${NC}"
+        echo -e "${RED}Error making the query${NC}"
         return 1
     fi
 }
 
-# Modo interactivo
+# Interactive mode
 interactive_mode() {
-    echo -e "${BLUE}=== Modo Interactivo de Consultas ===${NC}"
-    echo -e "${YELLOW}Escriba 'quit' o 'exit' para salir${NC}"
-    echo -e "${YELLOW}Escriba 'clear' para limpiar la pantalla${NC}"
+    echo -e "${BLUE}=== Interactive Query Mode ===${NC}"
+    echo -e "${YELLOW}Type 'quit' or 'exit' to leave${NC}"
+    echo -e "${YELLOW}Type 'clear' to clear the screen${NC}"
     echo ""
 
     while true; do
-        echo -ne "${GREEN}Pregunta: ${NC}"
+        echo -ne "${GREEN}Question: ${NC}"
         read -r question
 
         if [[ "$question" == "quit" || "$question" == "exit" ]]; then
-            echo -e "${YELLOW}¡Hasta luego!${NC}"
+            echo -e "${YELLOW}Goodbye!${NC}"
             break
         elif [[ "$question" == "clear" ]]; then
             clear
@@ -89,25 +89,25 @@ interactive_mode() {
     done
 }
 
-# Ejemplos predefinidos
+# Predefined examples
 run_examples() {
-    echo -e "${BLUE}=== Ejecutando Ejemplos de Consulta ===${NC}"
+    echo -e "${BLUE}=== Running Example Queries ===${NC}"
 
     local examples=(
-        "¿En qué caso es inadmisible la sucesión del cónyuge?"
-        "¿Cuáles son los requisitos para la sucesión testamentaria?"
-        "¿Qué es un contrato de compraventa?"
-        "¿Cuáles son las obligaciones del vendedor en un contrato de compraventa?"
+        "In what case is the spouse's succession inadmissible?"
+        "What are the requirements for testamentary succession?"
+        "What is a sales contract?"
+        "What are the obligations of the seller in a sales contract?"
     )
 
     for question in "${examples[@]}"; do
         query_document "$question"
-        echo -e "${YELLOW}Presione Enter para continuar...${NC}"
+        echo -e "${YELLOW}Press Enter to continue...${NC}"
         read -r
     done
 }
 
-# Función principal
+# Main function
 main() {
     if ! check_api; then
         exit 1
@@ -119,7 +119,7 @@ main() {
             ;;
         query)
             if [ -z "$2" ]; then
-                echo -e "${YELLOW}Uso: $0 query \"su pregunta aquí\"${NC}"
+                echo -e "${YELLOW}Usage: $0 query \"your question here\"${NC}"
                 exit 1
             fi
             query_document "$2"
@@ -131,17 +131,17 @@ main() {
             interactive_mode
             ;;
         *)
-            echo "Uso: $0 [health|query|examples|interactive]"
+            echo "Usage: $0 [health|query|examples|interactive]"
             echo ""
-            echo "Comandos:"
-            echo "  health      - Verificar estado de la API"
-            echo "  query       - Hacer una consulta específica"
-            echo "  examples    - Ejecutar ejemplos predefinidos"
-            echo "  interactive - Modo interactivo de consultas"
+            echo "Commands:"
+            echo "  health      - Check API status"
+            echo "  query       - Make a specific query"
+            echo "  examples    - Run predefined examples"
+            echo "  interactive - Interactive query mode"
             echo ""
-            echo "Ejemplos:"
+            echo "Examples:"
             echo "  $0 health"
-            echo "  $0 query \"¿Qué es un contrato?\""
+            echo "  $0 query \"What is a contract?\""
             echo "  $0 examples"
             echo "  $0 interactive"
             exit 1
@@ -149,5 +149,5 @@ main() {
     esac
 }
 
-# Ejecutar función principal
+# Run main function
 main "$@"

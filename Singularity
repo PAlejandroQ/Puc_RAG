@@ -2,13 +2,13 @@ Bootstrap: docker
 From: python:3.10-slim
 
 %post
-    # Actualizar el sistema e instalar dependencias del sistema
+    # Update the system and install system dependencies
     apt-get update && apt-get install -y \
         curl \
         wget \
         && rm -rf /var/lib/apt/lists/*
 
-    # Instalar Python dependencies
+    # Install Python dependencies
     pip install --no-cache-dir --upgrade pip
     pip install --no-cache-dir \
         langchain==0.3.27 \
@@ -21,13 +21,13 @@ From: python:3.10-slim
         uvicorn[standard]==0.35.0
 
 %environment
-    # Variables de entorno para la aplicación RAG
+    # Environment variables for the RAG application
     export ELASTICSEARCH_URL=http://localhost:9200
     export OLLAMA_BASE_URL=http://localhost:11434
     export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 %runscript
-    # Script por defecto cuando se ejecuta el contenedor
+    # Default script when the container is run
     cd /app
     exec uvicorn main:app --host 0.0.0.0 --port 8000
 
