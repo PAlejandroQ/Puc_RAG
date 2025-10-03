@@ -10,14 +10,16 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, CSVLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.embeddings import OllamaEmbeddings
 from langchain_community.llms import Ollama
 from langchain.prompts import PromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_elasticsearch import ElasticsearchStore
+from langchain_core.documents import Document
 from elasticsearch import Elasticsearch
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,10 +29,13 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="RAG Document Q&A", description="Query documents using RAG with Ollama and Elasticsearch")
 
 # Configuration
-DOCUMENT_PATH = "app/Codigo_Civil_split.pdf"
-INDEX_NAME = "codigo_civil_index"
+DOCUMENT_PATH_PDF = "app/Codigo_Civil_split.pdf"
+DOCUMENT_PATH_CSV = "app/csv/tags_pocos_mro_06_nano.csv"
+INDEX_NAME_PDF = "codigo_civil_index"
+INDEX_NAME_CSV = "tags_pocos_mro_06_index_01"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+DATA_SOURCE = os.getenv("DATA_SOURCE", "CSV").upper()  # 'PDF' o 'CSV'
 
 class QueryRequest(BaseModel):
     """Request model for query endpoint"""
@@ -68,63 +73,164 @@ def create_llm_model() -> Ollama:
         temperature=0.1
     )
 
+def load_and_chunk_csv(file_path: str) -> List[Document]:
+    """
+    Carga y procesa el CSV siguiendo las mejores prácticas para RAG en datos tabulares.
+    Cada fila se convierte en un 'chunk' descriptivo para mejorar la relevancia del embedding.
+
+    Args:
+        file_path: Ruta al archivo CSV
+
+    Returns:
+        List[Document]: Lista de documentos procesados
+    """
+    logger.info(f"Cargando y procesando CSV desde {file_path}...")
+    try:
+        df = pd.read_csv(file_path)
+    except Exception as e:
+        logger.error(f"Error al leer el CSV: {e}")
+        raise
+
+    chunks = []
+
+    # Definición de descripciones de columna para mejor comprensión
+    column_descriptions = {
+        "Name": "Nombre de la etiqueta o punto de medición.",
+        "Descriptor": "Descripción entendible para humanos del punto de medición (la clave para la búsqueda).",
+        "PointType": "Tipo de variable (ej: Int, Float, Digital).",
+        "EngineeringUnits": "Unidad de la variable (ej: Binária, USD, kgf/cm² a, ºC, etc.).",
+        "PointClass": "Clase del punto de medición.",
+        "Span": "Rango máximo del valor.",
+        "Zero": "Valor cero de referencia.",
+        "DigitalSetName": "Nombre del conjunto digital si aplica."
+    }
+
+    # Chunking a Nivel de Fila con Contexto
+    for index, row in df.iterrows():
+        # Convertir todos los valores NaN a None para evitar problemas de serialización
+        row_dict = {col: (None if pd.isna(row.get(col)) else row.get(col)) for col in df.columns}
+
+        # Crear un texto descriptivo para el chunk (combinando la fila con sus encabezados)
+        content_parts = []
+
+        # Información principal
+        content_parts.append(f"El punto de medición '{row_dict.get('Name', 'N/A')}' tiene la siguiente descripción: '{row_dict.get('Descriptor', 'N/A')}'.")
+
+        # Información técnica
+        if row_dict.get('PointType'):
+            content_parts.append(f"Es de tipo '{row_dict['PointType']}'.")
+        if row_dict.get('EngineeringUnits'):
+            content_parts.append(f"Sus unidades son '{row_dict['EngineeringUnits']}'.")
+        if row_dict.get('PointClass'):
+            content_parts.append(f"Pertenece a la clase '{row_dict['PointClass']}'.")
+
+        # Información adicional técnica
+        if row_dict.get('Span') is not None:
+            content_parts.append(f"El rango máximo es {row_dict['Span']}.")
+        if row_dict.get('Zero') is not None:
+            content_parts.append(f"El valor cero de referencia es {row_dict['Zero']}.")
+        if row_dict.get('DigitalSetName'):
+            content_parts.append(f"Pertenece al conjunto digital '{row_dict['DigitalSetName']}'.")
+
+        content = " ".join(content_parts)
+
+        # Crear un objeto Document de LangChain
+        # Se añaden metadatos detallados para facilitar la búsqueda y filtrado futuro
+        doc = Document(
+            page_content=content,
+            metadata={
+                "source": file_path,
+                "row_id": index,
+                "WebId": row_dict.get("WebId", ""),
+                "Id": row_dict.get("Id", ""),
+                "Name": row_dict.get("Name", ""),
+                "Path": row_dict.get("Path", ""),
+                "Descriptor": row_dict.get("Descriptor", ""),
+                "PointClass": row_dict.get("PointClass", ""),
+                "PointType": row_dict.get("PointType", ""),
+                "DigitalSetName": row_dict.get("DigitalSetName", ""),
+                "EngineeringUnits": row_dict.get("EngineeringUnits", ""),
+                "Span": row_dict.get("Span", None),
+                "Zero": row_dict.get("Zero", None),
+                "Step": row_dict.get("Step", None),
+                "data_type": "tabular_data"  # Metadato útil para distinguir de PDFs
+            }
+        )
+        chunks.append(doc)
+
+    logger.info(f"CSV procesado en {len(chunks)} chunks descriptivos.")
+    return chunks
+
 def initialize_vector_store():
     """
     Initialize or load existing vector store with document embeddings using Elasticsearch.
-
-    This function:
-    1. Checks if the index exists in Elasticsearch
-    2. If not, loads the PDF, splits it into chunks, creates embeddings, and stores them
-    3. If exists, simply connects to the existing index
+    Soporta carga modular de PDF o CSV basada en la variable DATA_SOURCE.
 
     Returns:
         ElasticsearchStore: Configured vector store
     """
     try:
-        logger.info("Initializing vector store...")
+        # Determine paths and index names based on DATA_SOURCE
+        if DATA_SOURCE == "PDF":
+            current_index_name = INDEX_NAME_PDF
+            document_path = DOCUMENT_PATH_PDF
+            logger.info("Modo de carga: PDF (Documento legal)")
+        elif DATA_SOURCE == "CSV":
+            current_index_name = INDEX_NAME_CSV
+            document_path = DOCUMENT_PATH_CSV
+            logger.info("Modo de carga: CSV (Datos Estructurados/Puntos de Medición)")
+        else:
+            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' no soportado. Debe ser 'PDF' o 'CSV'.")
+
+        logger.info(f"Índice de Elasticsearch: {current_index_name}")
 
         # Initialize embeddings model
         embeddings = create_embeddings_model()
-
-        # Connect to Elasticsearch
         es_client = Elasticsearch(ELASTICSEARCH_URL)
 
         # Check if index exists
-        if es_client.indices.exists(index=INDEX_NAME):
+        if es_client.indices.exists(index=current_index_name):
             logger.info("Found existing index, loading vector store...")
             vector_store = ElasticsearchStore(
                 es_url=ELASTICSEARCH_URL,
-                index_name=INDEX_NAME,
+                index_name=current_index_name,
                 embedding=embeddings
             )
         else:
             logger.info("Index not found, creating new one...")
 
-            # Load and process document
-            if not Path(DOCUMENT_PATH).exists():
-                raise FileNotFoundError(f"Document not found at {DOCUMENT_PATH}")
+            if not Path(document_path).exists():
+                raise FileNotFoundError(f"Document not found at {document_path}")
 
-            loader = PyPDFLoader(DOCUMENT_PATH)
-            documents = loader.load()
-            logger.info(f"Loaded {len(documents)} pages from document")
+            if DATA_SOURCE == "PDF":
+                # Lógica de carga para PDF (Mantenida)
+                loader = PyPDFLoader(document_path)
+                documents = loader.load()
+                logger.info(f"Loaded {len(documents)} pages from PDF document")
 
-            # Split documents into chunks
-            text_splitter = RecursiveCharacterTextSplitter(
-                chunk_size=1000,
-                chunk_overlap=200,
-                length_function=len
-            )
-            chunks = text_splitter.split_documents(documents)
-            logger.info(f"Split into {len(chunks)} chunks")
+                # Split documents into chunks
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    length_function=len
+                )
+                chunks = text_splitter.split_documents(documents)
+                logger.info(f"Split PDF into {len(chunks)} chunks")
+
+            elif DATA_SOURCE == "CSV":
+                # Lógica de carga para CSV (Mejora: Chunking Descriptivo)
+                # Implementación de la mejor práctica: Chunking a Nivel de Fila con Contexto
+                chunks = load_and_chunk_csv(document_path)
+                logger.info(f"Processed CSV into {len(chunks)} descriptive chunks")
 
             # Create vector store with embeddings
             vector_store = ElasticsearchStore.from_documents(
                 documents=chunks,
                 embedding=embeddings,
                 es_url=ELASTICSEARCH_URL,
-                index_name=INDEX_NAME
+                index_name=current_index_name
             )
-            logger.info("Vector store created and populated")
+            logger.info(f"Vector store created and populated for index {current_index_name}")
 
         return vector_store
 
@@ -152,15 +258,16 @@ async def startup_event():
         retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
         # Create prompt template
-        prompt_template = """Use the following pieces of context to answer the question at the end.
-        If you don't know the answer, just say that you don't know, don't try to make up an answer.
+        prompt_template = """Eres un asistente RAG experto. Utiliza únicamente los fragmentos de contexto proporcionados para responder a la pregunta.
+        Si el contexto se refiere a **datos tabulares/puntos de medición**, tu respuesta debe ser precisa y citar el valor de las columnas relevantes (ej. 'Name', 'Descriptor', 'PointType').
+        Si el contexto NO tiene la información para responder, di que no lo sabes. No inventes respuestas.
 
-        Context:
+        Contexto:
         {context}
 
-        Question: {question}
+        Pregunta: {question}
 
-        Answer:"""
+        Respuesta concisa:"""
 
         PROMPT = PromptTemplate(
             template=prompt_template,
