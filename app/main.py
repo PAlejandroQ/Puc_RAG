@@ -32,7 +32,7 @@ app = FastAPI(title="RAG Document Q&A", description="Query documents using RAG w
 DOCUMENT_PATH_PDF = "app/Codigo_Civil_split.pdf"
 DOCUMENT_PATH_CSV = "app/csv/tags_pocos_mro_06_nano.csv"
 INDEX_NAME_PDF = "codigo_civil_index"
-INDEX_NAME_CSV = "tags_pocos_mro_06_index_01"
+INDEX_NAME_CSV = "tags_pocos_mro_06_index_02"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
 DATA_SOURCE = os.getenv("DATA_SOURCE", "CSV").upper()  # 'PDF' o 'CSV'
@@ -75,67 +75,65 @@ def create_llm_model() -> Ollama:
 
 def load_and_chunk_csv(file_path: str) -> List[Document]:
     """
-    Carga y procesa el CSV siguiendo las mejores prácticas para RAG en datos tabulares.
-    Cada fila se convierte en un 'chunk' descriptivo para mejorar la relevancia del embedding.
+    Loads and processes the CSV following best practices for RAG on tabular data.
+    Each row is converted into a descriptive 'chunk' to improve embedding relevance.
 
     Args:
-        file_path: Ruta al archivo CSV
+        file_path: Path to the CSV file
 
     Returns:
-        List[Document]: Lista de documentos procesados
+        List[Document]: List of processed documents
     """
-    logger.info(f"Cargando y procesando CSV desde {file_path}...")
+    logger.info(f"Loading and processing CSV from {file_path}...")
     try:
         df = pd.read_csv(file_path)
     except Exception as e:
-        logger.error(f"Error al leer el CSV: {e}")
+        logger.error(f"Error reading CSV: {e}")
         raise
 
     chunks = []
 
-    # Definición de descripciones de columna para mejor comprensión
+    # Column descriptions for better understanding
     column_descriptions = {
-        "Name": "Nombre de la etiqueta o punto de medición.",
-        "Descriptor": "Descripción entendible para humanos del punto de medición (la clave para la búsqueda).",
-        "PointType": "Tipo de variable (ej: Int, Float, Digital).",
-        "EngineeringUnits": "Unidad de la variable (ej: Binária, USD, kgf/cm² a, ºC, etc.).",
-        "PointClass": "Clase del punto de medición.",
-        "Span": "Rango máximo del valor.",
-        "Zero": "Valor cero de referencia.",
-        "DigitalSetName": "Nombre del conjunto digital si aplica."
+        "Name": "Name of the tag or measurement point.",
+        "Descriptor": "Human-readable description of the measurement point (the key for search).",
+        "PointType": "Variable type (e.g., Int, Float, Digital).",
+        "EngineeringUnits": "Variable unit (e.g., Binary, USD, kgf/cm² a, ºC, etc.).",
+        "PointClass": "Class of the measurement point.",
+        "Span": "Maximum value range.",
+        "Zero": "Reference zero value.",
+        "DigitalSetName": "Name of the digital set if applicable."
     }
 
-    # Chunking a Nivel de Fila con Contexto
+    # Row-level chunking with context
     for index, row in df.iterrows():
-        # Convertir todos los valores NaN a None para evitar problemas de serialización
+        # Convert all NaN values to None to avoid serialization issues
         row_dict = {col: (None if pd.isna(row.get(col)) else row.get(col)) for col in df.columns}
 
-        # Crear un texto descriptivo para el chunk (combinando la fila con sus encabezados)
+        # Main information
         content_parts = []
+        content_parts.append(f"The measurement point '{row_dict.get('Name', 'N/A')}' has the following description: '{row_dict.get('Descriptor', 'N/A')}'.")
 
-        # Información principal
-        content_parts.append(f"El punto de medición '{row_dict.get('Name', 'N/A')}' tiene la siguiente descripción: '{row_dict.get('Descriptor', 'N/A')}'.")
-
-        # Información técnica
+        # Technical information
         if row_dict.get('PointType'):
-            content_parts.append(f"Es de tipo '{row_dict['PointType']}'.")
+            content_parts.append(f"It is of type '{row_dict['PointType']}'.")
         if row_dict.get('EngineeringUnits'):
-            content_parts.append(f"Sus unidades son '{row_dict['EngineeringUnits']}'.")
+            content_parts.append(f"Its units are '{row_dict['EngineeringUnits']}'.")
         if row_dict.get('PointClass'):
-            content_parts.append(f"Pertenece a la clase '{row_dict['PointClass']}'.")
+            content_parts.append(f"It belongs to the class '{row_dict['PointClass']}'.")
 
-        # Información adicional técnica
+        # Additional technical information
         if row_dict.get('Span') is not None:
-            content_parts.append(f"El rango máximo es {row_dict['Span']}.")
+            content_parts.append(f"The maximum range is {row_dict['Span']}.")
         if row_dict.get('Zero') is not None:
-            content_parts.append(f"El valor cero de referencia es {row_dict['Zero']}.")
+            content_parts.append(f"The reference zero value is {row_dict['Zero']}.")
         if row_dict.get('DigitalSetName'):
-            content_parts.append(f"Pertenece al conjunto digital '{row_dict['DigitalSetName']}'.")
+            content_parts.append(f"It belongs to the digital set '{row_dict['DigitalSetName']}'.")
 
         content = " ".join(content_parts)
 
-        # Crear un objeto Document de LangChain
-        # Se añaden metadatos detallados para facilitar la búsqueda y filtrado futuro
+        # Create a LangChain Document object
+        # Detailed metadata is added to facilitate future search and filtering
         doc = Document(
             page_content=content,
             metadata={
@@ -153,18 +151,18 @@ def load_and_chunk_csv(file_path: str) -> List[Document]:
                 "Span": row_dict.get("Span", None),
                 "Zero": row_dict.get("Zero", None),
                 "Step": row_dict.get("Step", None),
-                "data_type": "tabular_data"  # Metadato útil para distinguir de PDFs
+                "data_type": "tabular_data"  # Useful metadata to distinguish from PDFs
             }
         )
         chunks.append(doc)
 
-    logger.info(f"CSV procesado en {len(chunks)} chunks descriptivos.")
+    logger.info(f"CSV processed into {len(chunks)} descriptive chunks.")
     return chunks
 
 def initialize_vector_store():
     """
     Initialize or load existing vector store with document embeddings using Elasticsearch.
-    Soporta carga modular de PDF o CSV basada en la variable DATA_SOURCE.
+    Supports modular loading of PDF or CSV based on the DATA_SOURCE variable.
 
     Returns:
         ElasticsearchStore: Configured vector store
@@ -174,15 +172,15 @@ def initialize_vector_store():
         if DATA_SOURCE == "PDF":
             current_index_name = INDEX_NAME_PDF
             document_path = DOCUMENT_PATH_PDF
-            logger.info("Modo de carga: PDF (Documento legal)")
+            logger.info("Loading mode: PDF (Legal Document)")
         elif DATA_SOURCE == "CSV":
             current_index_name = INDEX_NAME_CSV
             document_path = DOCUMENT_PATH_CSV
-            logger.info("Modo de carga: CSV (Datos Estructurados/Puntos de Medición)")
+            logger.info("Loading mode: CSV (Structured Data/Measurement Points)")
         else:
-            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' no soportado. Debe ser 'PDF' o 'CSV'.")
+            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' not supported. Must be 'PDF' or 'CSV'.")
 
-        logger.info(f"Índice de Elasticsearch: {current_index_name}")
+        logger.info(f"Elasticsearch index: {current_index_name}")
 
         # Initialize embeddings model
         embeddings = create_embeddings_model()
@@ -203,7 +201,7 @@ def initialize_vector_store():
                 raise FileNotFoundError(f"Document not found at {document_path}")
 
             if DATA_SOURCE == "PDF":
-                # Lógica de carga para PDF (Mantenida)
+                # Loading logic for PDF (Maintained)
                 loader = PyPDFLoader(document_path)
                 documents = loader.load()
                 logger.info(f"Loaded {len(documents)} pages from PDF document")
@@ -218,8 +216,8 @@ def initialize_vector_store():
                 logger.info(f"Split PDF into {len(chunks)} chunks")
 
             elif DATA_SOURCE == "CSV":
-                # Lógica de carga para CSV (Mejora: Chunking Descriptivo)
-                # Implementación de la mejor práctica: Chunking a Nivel de Fila con Contexto
+                # Loading logic for CSV (Improvement: Descriptive Chunking)
+                # Implementation of best practice: Row-level chunking with context
                 chunks = load_and_chunk_csv(document_path)
                 logger.info(f"Processed CSV into {len(chunks)} descriptive chunks")
 
@@ -257,17 +255,17 @@ async def startup_event():
         # Create retriever
         retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
-        # Create prompt template
-        prompt_template = """Eres un asistente RAG experto. Utiliza únicamente los fragmentos de contexto proporcionados para responder a la pregunta.
-        Si el contexto se refiere a **datos tabulares/puntos de medición**, tu respuesta debe ser precisa y citar el valor de las columnas relevantes (ej. 'Name', 'Descriptor', 'PointType').
-        Si el contexto NO tiene la información para responder, di que no lo sabes. No inventes respuestas.
+        # Create prompt template (in English)
+        prompt_template = """You are an expert RAG assistant. Use only the provided context fragments to answer the question.
+If the context refers to **tabular data/measurement points**, your answer must be precise and cite the value of the relevant columns (e.g., 'Name', 'Descriptor', 'PointType').
+If the context does NOT have the information to answer, say you do not know. Do not make up answers.
 
-        Contexto:
-        {context}
+Context:
+{context}
 
-        Pregunta: {question}
+Question: {question}
 
-        Respuesta concisa:"""
+Concise answer (in English):"""
 
         PROMPT = PromptTemplate(
             template=prompt_template,

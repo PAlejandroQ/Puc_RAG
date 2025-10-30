@@ -30,9 +30,16 @@ services:
       - elasticsearch
     volumes:
       - ./app:/app
+      # - ./app/csv:/app/csv
+      # - ./app/pdf:/app/pdf
     environment:
       - ELASTICSEARCH_URL=http://elasticsearch:9200
       - OLLAMA_BASE_URL=http://ollama:11434
+      - DOCUMENT_PATH_CSV=/app/csv/tags_pocos_mro_06_nano.csv
+      - DOCUMENT_PATH_PDF=/app/pdf/Codigo_Civil_split.pdf
+      - INDEX_NAME_CSV=tags_pocos_mro_06_index_02
+      - INDEX_NAME_PDF=codigo_civil_index
+      - DATA_SOURCE=CSV
     entrypoint: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     restart: unless-stopped
 

@@ -12,5 +12,5 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "question": "Buscame informacion sobre Alinhamento hidráulico"
+  "question": "Find me information about Alinhamento hidráulico"
 }
