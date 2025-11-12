@@ -25,34 +25,34 @@ import pandas as pd
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(title="RAG Document Q&A", description="Query documents using RAG with Ollama and Elasticsearch")
+# Inicializar aplicação FastAPI
+app = FastAPI(title="RAG Documentos Q&A", description="Consultar documentos usando RAG com Ollama e Elasticsearch")
 
-# Configuration
+# Configuração
 DOCUMENT_PATH_PDF = "app/Codigo_Civil_split.pdf"
-DOCUMENT_PATH_CSV = "app/csv/tags_pocos_mro_06_nano.csv"
+DOCUMENT_PATH_CSV = "app/csv/tags_MRO3_nano.csv"
 INDEX_NAME_PDF = "codigo_civil_index"
-INDEX_NAME_CSV = "tags_pocos_mro_06_index_02"
+INDEX_NAME_CSV = "tags_mro3_index_nano"
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
-DATA_SOURCE = os.getenv("DATA_SOURCE", "CSV").upper()  # 'PDF' o 'CSV'
+DATA_SOURCE = os.getenv("DATA_SOURCE", "CSV").upper()  # 'PDF' ou 'CSV'
 
 class QueryRequest(BaseModel):
-    """Request model for query endpoint"""
+    """Modelo de requisição para o endpoint de consulta"""
     question: str
 
 class QueryResponse(BaseModel):
-    """Response model for query endpoint"""
+    """Modelo de resposta para o endpoint de consulta"""
     answer: str
     source_documents: List[Dict[str, Any]]
 
 def create_embeddings_model() -> OllamaEmbeddings:
     """
-    Create embeddings model instance.
-    This function encapsulates the embeddings creation for easy future migration to HuggingFace.
+    Criar instância do modelo de embeddings.
+    Esta função encapsula a criação de embeddings para facilitar futura migração para HuggingFace.
 
     Returns:
-        OllamaEmbeddings: Configured embeddings model
+        OllamaEmbeddings: Modelo de embeddings configurado
     """
     return OllamaEmbeddings(
         model="llama3",
@@ -61,11 +61,11 @@ def create_embeddings_model() -> OllamaEmbeddings:
 
 def create_llm_model() -> Ollama:
     """
-    Create LLM instance.
-    This function encapsulates the LLM creation for easy future migration to HuggingFace.
+    Criar instância do LLM.
+    Esta função encapsula a criação do LLM para facilitar futura migração para HuggingFace.
 
     Returns:
-        Ollama: Configured LLM instance
+        Ollama: Instância do LLM configurado
     """
     return Ollama(
         model="llama3",
@@ -75,165 +75,152 @@ def create_llm_model() -> Ollama:
 
 def load_and_chunk_csv(file_path: str) -> List[Document]:
     """
-    Loads and processes the CSV following best practices for RAG on tabular data.
-    Each row is converted into a descriptive 'chunk' to improve embedding relevance.
+    Carrega e processa o CSV seguindo as melhores práticas para RAG em dados tabulares.
+    Cada linha é convertida em um 'chunk' descritivo para melhorar a relevância do embedding.
 
     Args:
-        file_path: Path to the CSV file
+        file_path: Caminho para o arquivo CSV
 
     Returns:
-        List[Document]: List of processed documents
+        List[Document]: Lista de documentos processados
     """
-    logger.info(f"Loading and processing CSV from {file_path}...")
+    logger.info(f"Carregando e processando CSV de {file_path}...")
     try:
         df = pd.read_csv(file_path)
     except Exception as e:
-        logger.error(f"Error reading CSV: {e}")
+        logger.error(f"Erro ao ler CSV: {e}")
         raise
 
     chunks = []
 
-    # Column descriptions for better understanding
+    # Descrições das colunas para melhor compreensão
     column_descriptions = {
-        "Name": "Name of the tag or measurement point.",
-        "Descriptor": "Human-readable description of the measurement point (the key for search).",
-        "PointType": "Variable type (e.g., Int, Float, Digital).",
-        "EngineeringUnits": "Variable unit (e.g., Binary, USD, kgf/cm² a, ºC, etc.).",
-        "PointClass": "Class of the measurement point.",
-        "Span": "Maximum value range.",
-        "Zero": "Reference zero value.",
-        "DigitalSetName": "Name of the digital set if applicable."
+        "nomeVariavel": "Nome da variável ou ponto de medição.",
+        "descricao": "Descrição legível para humanos do ponto de medição (a chave para busca).",
+        "idElemento": "ID do elemento/poço.",
+        "nomeElemento": "Nome do elemento/poço.",
+        "idUnidade": "ID da unidade de medida.",
+        "siglaUnidade": "Sigla da unidade de medida.",
+        "tag": "Tag ou identificador da variável."
     }
 
-    # Row-level chunking with context
+    # Chunking a nível de linha com contexto
     for index, row in df.iterrows():
-        # Convert all NaN values to None to avoid serialization issues
+        # Converter todos os valores NaN para None para evitar problemas de serialização
         row_dict = {col: (None if pd.isna(row.get(col)) else row.get(col)) for col in df.columns}
 
-        # Main information
+        # Informações principais
         content_parts = []
-        content_parts.append(f"The measurement point '{row_dict.get('Name', 'N/A')}' has the following description: '{row_dict.get('Descriptor', 'N/A')}'.")
+        content_parts.append(f"A variável '{row_dict.get('nomeVariavel', 'N/A')}' tem a seguinte descrição: '{row_dict.get('descricao', 'N/A')}'.")
 
-        # Technical information
-        if row_dict.get('PointType'):
-            content_parts.append(f"It is of type '{row_dict['PointType']}'.")
-        if row_dict.get('EngineeringUnits'):
-            content_parts.append(f"Its units are '{row_dict['EngineeringUnits']}'.")
-        if row_dict.get('PointClass'):
-            content_parts.append(f"It belongs to the class '{row_dict['PointClass']}'.")
-
-        # Additional technical information
-        if row_dict.get('Span') is not None:
-            content_parts.append(f"The maximum range is {row_dict['Span']}.")
-        if row_dict.get('Zero') is not None:
-            content_parts.append(f"The reference zero value is {row_dict['Zero']}.")
-        if row_dict.get('DigitalSetName'):
-            content_parts.append(f"It belongs to the digital set '{row_dict['DigitalSetName']}'.")
+        # Informações técnicas adicionais
+        # if row_dict.get('nomeElemento'):
+        #     content_parts.append(f"Pertence ao elemento '{row_dict['nomeElemento']}'.")
+        # if row_dict.get('siglaUnidade'):
+        #     content_parts.append(f"Sua unidade é '{row_dict['siglaUnidade']}'.")
+        # if row_dict.get('tag') and row_dict['tag'] != 'ND':
+        #     content_parts.append(f"Seu tag é '{row_dict['tag']}'.")
 
         content = " ".join(content_parts)
 
-        # Create a LangChain Document object
-        # Detailed metadata is added to facilitate future search and filtering
+        # Criar um objeto Document do LangChain
+        # Metadados detalhados são adicionados para facilitar futuras buscas e filtros
         doc = Document(
             page_content=content,
             metadata={
                 "source": file_path,
                 "row_id": index,
-                "WebId": row_dict.get("WebId", ""),
-                "Id": row_dict.get("Id", ""),
-                "Name": row_dict.get("Name", ""),
-                "Path": row_dict.get("Path", ""),
-                "Descriptor": row_dict.get("Descriptor", ""),
-                "PointClass": row_dict.get("PointClass", ""),
-                "PointType": row_dict.get("PointType", ""),
-                "DigitalSetName": row_dict.get("DigitalSetName", ""),
-                "EngineeringUnits": row_dict.get("EngineeringUnits", ""),
-                "Span": row_dict.get("Span", None),
-                "Zero": row_dict.get("Zero", None),
-                "Step": row_dict.get("Step", None),
-                "data_type": "tabular_data"  # Useful metadata to distinguish from PDFs
+                "idVariavel": row_dict.get("idVariavel", ""),
+                "nomeVariavel": row_dict.get("nomeVariavel", ""),
+                "descricao": row_dict.get("descricao", ""),
+                "idElemento": row_dict.get("idElemento", ""),
+                "nomeElemento": row_dict.get("nomeElemento", ""),
+                "idUnidade": row_dict.get("idUnidade", ""),
+                "siglaUnidade": row_dict.get("siglaUnidade", ""),
+                "tag": row_dict.get("tag", ""),
+                "data_type": "dados_tabulares"  # Metadado útil para distinguir de PDFs
             }
         )
         chunks.append(doc)
 
-    logger.info(f"CSV processed into {len(chunks)} descriptive chunks.")
+    logger.info(f"CSV processado em {len(chunks)} chunks descritivos.")
     return chunks
 
 def initialize_vector_store():
     """
-    Initialize or load existing vector store with document embeddings using Elasticsearch.
-    Supports modular loading of PDF or CSV based on the DATA_SOURCE variable.
+    Inicializa ou carrega vector store existente com embeddings de documentos usando Elasticsearch.
+    Suporta carregamento modular de PDF ou CSV baseado na variável DATA_SOURCE.
 
     Returns:
-        ElasticsearchStore: Configured vector store
+        ElasticsearchStore: Vector store configurado
     """
     try:
-        # Determine paths and index names based on DATA_SOURCE
+        # Determinar caminhos e nomes de índices baseado no DATA_SOURCE
         if DATA_SOURCE == "PDF":
             current_index_name = INDEX_NAME_PDF
             document_path = DOCUMENT_PATH_PDF
-            logger.info("Loading mode: PDF (Legal Document)")
+            logger.info("Modo de carregamento: PDF (Documento Legal)")
         elif DATA_SOURCE == "CSV":
             current_index_name = INDEX_NAME_CSV
             document_path = DOCUMENT_PATH_CSV
-            logger.info("Loading mode: CSV (Structured Data/Measurement Points)")
+            logger.info("Modo de carregamento: CSV (Dados Estruturados/Variáveis de Medição)")
         else:
-            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' not supported. Must be 'PDF' or 'CSV'.")
+            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' não suportado. Deve ser 'PDF' ou 'CSV'.")
 
-        logger.info(f"Elasticsearch index: {current_index_name}")
+        logger.info(f"Índice do Elasticsearch: {current_index_name}")
 
-        # Initialize embeddings model
+        # Inicializar modelo de embeddings
         embeddings = create_embeddings_model()
         es_client = Elasticsearch(ELASTICSEARCH_URL)
 
-        # Check if index exists
+        # Verificar se o índice existe
         if es_client.indices.exists(index=current_index_name):
-            logger.info("Found existing index, loading vector store...")
+            logger.info("Índice existente encontrado, carregando vector store...")
             vector_store = ElasticsearchStore(
                 es_url=ELASTICSEARCH_URL,
                 index_name=current_index_name,
                 embedding=embeddings
             )
         else:
-            logger.info("Index not found, creating new one...")
+            logger.info("Índice não encontrado, criando novo...")
 
             if not Path(document_path).exists():
-                raise FileNotFoundError(f"Document not found at {document_path}")
+                raise FileNotFoundError(f"Documento não encontrado em {document_path}")
 
             if DATA_SOURCE == "PDF":
-                # Loading logic for PDF (Maintained)
+                # Lógica de carregamento para PDF (Mantida)
                 loader = PyPDFLoader(document_path)
                 documents = loader.load()
-                logger.info(f"Loaded {len(documents)} pages from PDF document")
+                logger.info(f"Carregadas {len(documents)} páginas do documento PDF")
 
-                # Split documents into chunks
+                # Dividir documentos em chunks
                 text_splitter = RecursiveCharacterTextSplitter(
                     chunk_size=1000,
                     chunk_overlap=200,
                     length_function=len
                 )
                 chunks = text_splitter.split_documents(documents)
-                logger.info(f"Split PDF into {len(chunks)} chunks")
+                logger.info(f"PDF dividido em {len(chunks)} chunks")
 
             elif DATA_SOURCE == "CSV":
-                # Loading logic for CSV (Improvement: Descriptive Chunking)
-                # Implementation of best practice: Row-level chunking with context
+                # Lógica de carregamento para CSV (Melhoria: Chunking Descritivo)
+                # Implementação da melhor prática: Chunking a nível de linha com contexto
                 chunks = load_and_chunk_csv(document_path)
-                logger.info(f"Processed CSV into {len(chunks)} descriptive chunks")
+                logger.info(f"CSV processado em {len(chunks)} chunks descritivos")
 
-            # Create vector store with embeddings
+            # Criar vector store com embeddings
             vector_store = ElasticsearchStore.from_documents(
                 documents=chunks,
                 embedding=embeddings,
                 es_url=ELASTICSEARCH_URL,
                 index_name=current_index_name
             )
-            logger.info(f"Vector store created and populated for index {current_index_name}")
+            logger.info(f"Vector store criado e populado para o índice {current_index_name}")
 
         return vector_store
 
     except Exception as e:
-        logger.error(f"Error initializing vector store: {str(e)}")
+        logger.error(f"Erro ao inicializar vector store: {str(e)}")
         raise
 
 # Global variables for vector store and QA chain
@@ -242,37 +229,37 @@ qa_chain = None
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the RAG system on startup"""
+    """Inicializar o sistema RAG na inicialização"""
     global vector_store, qa_chain
 
     try:
-        # Initialize vector store
+        # Inicializar vector store
         vector_store = initialize_vector_store()
 
-        # Create LLM
+        # Criar LLM
         llm = create_llm_model()
 
-        # Create retriever
+        # Criar retriever
         retriever = vector_store.as_retriever(search_kwargs={"k": 3})
 
-        # Create prompt template (in English)
-        prompt_template = """You are an expert RAG assistant. Use only the provided context fragments to answer the question.
-If the context refers to **tabular data/measurement points**, your answer must be precise and cite the value of the relevant columns (e.g., 'Name', 'Descriptor', 'PointType').
-If the context does NOT have the information to answer, say you do not know. Do not make up answers.
+        # Criar template de prompt (em português)
+        prompt_template = """Você é um assistente RAG especialista. Use apenas os fragmentos de contexto fornecidos para responder à pergunta.
+Se o contexto se refere a **dados tabulares/variáveis de medição**, sua resposta deve ser precisa e citar o valor das colunas relevantes (ex.: 'nomeVariavel', 'descricao', 'siglaUnidade').
+Se o contexto NÃO tiver a informação para responder, diga que não sabe. Não invente respostas.
 
-Context:
+Contexto:
 {context}
 
-Question: {question}
+Pergunta: {question}
 
-Concise answer (in English):"""
+Resposta concisa (em português):"""
 
         PROMPT = PromptTemplate(
             template=prompt_template,
             input_variables=["context", "question"]
         )
 
-        # Create QA chain
+        # Criar cadeia QA
         qa_chain = RetrievalQA.from_chain_type(
             llm=llm,
             chain_type="stuff",
@@ -281,38 +268,38 @@ Concise answer (in English):"""
             return_source_documents=True
         )
 
-        logger.info("RAG system initialized successfully")
+        logger.info("Sistema RAG inicializado com sucesso")
 
     except Exception as e:
-        logger.error(f"Failed to initialize RAG system: {str(e)}")
+        logger.error(f"Falha ao inicializar sistema RAG: {str(e)}")
         raise
 
 @app.get("/")
 async def root():
-    """Health check endpoint"""
-    return {"message": "RAG Document Q&A API", "status": "running"}
+    """Endpoint de verificação de saúde"""
+    return {"message": "API RAG Documentos Q&A", "status": "executando"}
 
 @app.post("/query", response_model=QueryResponse)
 async def query_document(request: QueryRequest):
     """
-    Query the document using RAG.
+    Consultar o documento usando RAG.
 
     Args:
-        request: QueryRequest containing the question
+        request: QueryRequest contendo a pergunta
 
     Returns:
-        QueryResponse: Answer and source documents
+        QueryResponse: Resposta e documentos fonte
     """
     try:
         if qa_chain is None:
-            raise HTTPException(status_code=500, detail="RAG system not initialized")
+            raise HTTPException(status_code=500, detail="Sistema RAG não inicializado")
 
-        logger.info(f"Processing query: {request.question}")
+        logger.info(f"Processando consulta: {request.question}")
 
-        # Run the QA chain
+        # Executar a cadeia QA
         result = qa_chain({"query": request.question})
 
-        # Format source documents
+        # Formatar documentos fonte
         source_documents = []
         for doc in result.get("source_documents", []):
             source_documents.append({
@@ -326,8 +313,8 @@ async def query_document(request: QueryRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error processing query: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        logger.error(f"Erro ao processar consulta: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Erro ao processar consulta: {str(e)}")
 
 if __name__ == "__main__":
     import uvicorn
