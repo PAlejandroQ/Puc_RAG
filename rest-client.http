@@ -12,5 +12,15 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "question": "Find me information about Alinhamento hidráulico"
+  "question": "Este evento foi relatado; a qual(is) tag(s) ele está relacionado?: Tem sido observado aumento do BSW na chegada do MRO-3: A chegada de água nesse poço já era prevista pelo modelo de Póleo (V4C2): O poço deverá ser fechado para Parada Programada e permanecerá sendo monitorado após o retorno."
+}
+
+
+### Query document using RAG
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "a que tags estão relacionadas a medição de vazão de água?"
 }
