@@ -22,5 +22,14 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "question": "a que tags estão relacionadas a medição de vazão de água?"
+  "question": "Preciso de etiquetas que me forneçam informações sobre a temperatura."
+}
+
+### Query document using RAG
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Preciso das Tags de status das válvulas."
 }
