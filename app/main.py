@@ -6,6 +6,7 @@ Implementa um RAG Híbrido (Semântico + Literal) para TAGs de engenharia.
 import os
 import logging
 import re # Adicionado para Regex
+import httpx  # Para llamadas HTTP a la API de tags
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 
@@ -30,15 +31,14 @@ app = FastAPI(title="RAG Híbrido de TAGs Q&A", description="Consultar TAGs de e
 
 # Configuração
 DOCUMENT_PATH_PDF = "app/Codigo_Civil_split.pdf"
-DOCUMENT_PATH_CSV = "app/csv/Tags_grupamento_nano.csv" # Fuente principal con columna grupamento
-DOCUMENT_PATH_CSV_ADDITIONAL = "app/csv/tags_MRO3_nano.csv" # Datos adicionales opcionales
-DOCUMENT_PATH_CONTEXT = "app/txt/context.txt" # Contexto general
+DOCUMENT_PATH_CONTEXT = "app/txt/context.txt" # Contexto general (solo se indexa esto)
 INDEX_NAME_PDF = "codigo_civil_index"
-INDEX_NAME_CSV = "tags_mro3_index_grupamento_nano2" # ATENÇÃO: Apague este índice no Elasticsearch para re-indexar
+INDEX_NAME_CONTEXT = "context_reservoir_index" # Índice solo para contexto global del reservorio
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")  # Modelo de Ollama a usar (para LLM y embeddings)
 ELASTICSEARCH_URL = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
-DATA_SOURCE = os.getenv("DATA_SOURCE", "CSV").upper()  # 'PDF' ou 'CSV'
+TAG_API_URL = os.getenv("TAG_API_URL", "http://localhost:8001")  # URL de la API de tags
+DATA_SOURCE = os.getenv("DATA_SOURCE", "CONTEXT").upper()  # Ahora solo 'CONTEXT' o 'PDF'
 
 class QueryRequest(BaseModel):
     """Modelo de requisição para o endpoint de consulta"""
@@ -49,9 +49,172 @@ class QueryResponse(BaseModel):
     answer: str
     source_documents: List[Dict[str, Any]]
 
+class TagInfo(BaseModel):
+    """Modelo para información de tags desde la API"""
+    nomeVariavel: str
+    descricao: str
+    grupamento: Optional[str] = None
+
+class TagResponse(BaseModel):
+    """Modelo de respuesta de la API de tags"""
+    tags: List[TagInfo]
+    total_matches: int
+
 # =============================================================================
 # NOVAS FUNÇÕES HELPER (Parse e Geração de Contexto)
 # =============================================================================
+
+# =============================================================================
+# FUNÇÕES PARA INTERACCIÓN CON API DE TAGS
+# =============================================================================
+
+async def search_tags_from_api(tag_pattern: str, limit: int = 20) -> List[TagInfo]:
+    """
+    Busca tags usando la API de tags con patrón regex.
+
+    Args:
+        tag_pattern: Patrón regex para buscar tags
+        limit: Número máximo de resultados
+
+    Returns:
+        Lista de TagInfo con información de los tags encontrados
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{TAG_API_URL}/tags/search",
+                params={"tag_pattern": tag_pattern, "limit": limit}
+            )
+            response.raise_for_status()
+
+            data = response.json()
+            tag_response = TagResponse(**data)
+            return tag_response.tags
+
+    except httpx.RequestError as e:
+        logger.error(f"Error al conectar con API de tags: {e}")
+        return []
+    except Exception as e:
+        logger.error(f"Error al procesar respuesta de API de tags: {e}")
+        return []
+
+def extract_tag_patterns_from_question(question: str) -> List[str]:
+    """
+    Extrae posibles patrones de tags de la pregunta del usuario.
+
+    Busca patrones como:
+    - Nombres de tags específicos
+    - Palabras clave que podrían indicar tags
+    - Patrones comunes en nombres de variables
+
+    Returns:
+        Lista de patrones regex para buscar tags
+    """
+    patterns = []
+
+    # Buscar posibles nombres de tags en la pregunta (mayúsculas, guiones bajos, números)
+    tag_candidates = re.findall(r'\b[A-Z][A-Z0-9_]*\b', question)
+    for candidate in tag_candidates:
+        if len(candidate) > 3:  # Solo candidatos significativos
+            patterns.append(re.escape(candidate))  # Match exacto
+            patterns.append(f".*{re.escape(candidate)}.*")  # Match parcial
+
+    # Palabras clave que podrían indicar tipos de medición
+    keywords = {
+        "pressao": ["PRESSAO", "PRESSURE", "MA.*P"],
+        "temperatura": ["TEMPERATURA", "TEMPERATURE", "MA.*T"],
+        "vazao": ["VAZAO", "FLOW", "VZ"],
+        "status": ["STATUS", "STATE", "SV"],
+        "icv": ["ICV", "CI[123]"],
+        "pdg": ["PDG", "MA.*STATUS"],
+        "scm": ["SCM", "SV.*"]
+    }
+
+    question_lower = question.lower()
+    for keyword, tag_patterns in keywords.items():
+        if keyword in question_lower:
+            patterns.extend(tag_patterns)
+
+    # Remover duplicados manteniendo orden
+    seen = set()
+    unique_patterns = []
+    for pattern in patterns:
+        if pattern not in seen:
+            unique_patterns.append(pattern)
+            seen.add(pattern)
+
+    return unique_patterns[:10]  # Limitar a 10 patrones para no sobrecargar
+
+async def get_tag_context_for_question(question: str, llm: Ollama) -> str:
+    """
+    Obtiene contexto específico de tags relevante para la pregunta.
+
+    1. Extrae patrones de tags de la pregunta
+    2. Consulta la API de tags con estos patrones
+    3. Genera un contexto descriptivo usando el LLM
+
+    Returns:
+        Contexto descriptivo de tags relevantes
+    """
+    tag_patterns = extract_tag_patterns_from_question(question)
+
+    if not tag_patterns:
+        logger.info("No se encontraron patrones de tags en la pregunta")
+        return ""
+
+    all_tags = []
+    for pattern in tag_patterns:
+        tags = await search_tags_from_api(pattern, limit=5)
+        all_tags.extend(tags)
+
+    # Remover duplicados
+    seen_tags = set()
+    unique_tags = []
+    for tag in all_tags:
+        if tag.nomeVariavel not in seen_tags:
+            unique_tags.append(tag)
+            seen_tags.add(tag.nomeVariavel)
+
+    if not unique_tags:
+        logger.info("No se encontraron tags relevantes para la pregunta")
+        return ""
+
+    # Generar contexto descriptivo usando el LLM
+    try:
+        context_template = """Você é um especialista em engenharia de petróleo. Com base nos seguintes tags encontrados, gere um contexto técnico conciso que seja útil para responder à pergunta: "{question}"
+
+Tags encontrados:
+{tags_info}
+
+Gere um parágrafo conciso em português explicando estes pontos de medição e sua relevância para o contexto de reservatórios de poços petroleros."""
+
+        tags_info = "\n".join([
+            f"- {tag.nomeVariavel}: {tag.descricao} (Grupo: {tag.grupamento or 'N/A'})"
+            for tag in unique_tags[:10]  # Limitar a 10 tags
+        ])
+
+        prompt = PromptTemplate(
+            template=context_template,
+            input_variables=["question", "tags_info"]
+        )
+
+        chain = prompt | llm
+        tag_context = chain.invoke({
+            "question": question,
+            "tags_info": tags_info
+        })
+
+        logger.info(f"Contexto de tags generado para {len(unique_tags)} tags")
+        return tag_context.strip()
+
+    except Exception as e:
+        logger.error(f"Error al generar contexto de tags: {e}")
+        # Fallback: generar contexto simple sin LLM
+        tags_text = "\n".join([
+            f"- {tag.nomeVariavel}: {tag.descricao}"
+            for tag in unique_tags[:5]
+        ])
+        return f"Informações de tags relevantes encontradas:\n{tags_text}"
 
 def parse_tag(tag_string: str) -> Optional[Dict[str, str]]:
     """
@@ -323,23 +486,23 @@ def load_and_chunk_csv(file_path: str, llm: Ollama, general_context: str = "") -
 
 def initialize_vector_store():
     """
-    **MODIFICADO: Inicializa o vector store.**
-    
-    - Se o índice não existe, chama o `create_llm_model` e passa o LLM
-      para `load_and_chunk_csv` para gerar os contextos descritivos.
-    - Se o índice já existe, apenas se conecta a ele.
+    **MODIFICADO: Inicializa o vector store APENAS com contexto global.**
+
+    - Agora indexa apenas o contexto geral do reservorio (DOCUMENT_PATH_CONTEXT)
+    - Os tags específicos são obtidos via API em tempo real
+    - Se o índice não existe, carrega apenas o contexto geral
+    - Se o índice já existe, apenas se conecta a ele
     """
     try:
-        if DATA_SOURCE == "CSV":
-            current_index_name = INDEX_NAME_CSV
-            document_path = DOCUMENT_PATH_CSV
-            logger.info("Modo de carregamento: CSV (Dados Estruturados/TAGs)")
+        if DATA_SOURCE == "CONTEXT":
+            current_index_name = INDEX_NAME_CONTEXT
+            logger.info("Modo de carregamento: CONTEXTO GLOBAL (Reservorio de poços petroleros)")
         elif DATA_SOURCE == "PDF":
             current_index_name = INDEX_NAME_PDF
             document_path = DOCUMENT_PATH_PDF
             logger.info("Modo de carregamento: PDF (Documento Legal)")
         else:
-            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' não suportado.")
+            raise ValueError(f"DATA_SOURCE '{DATA_SOURCE}' não suportado. Use 'CONTEXT' ou 'PDF'.")
 
         logger.info(f"Índice do Elasticsearch: {current_index_name}")
 
@@ -348,7 +511,7 @@ def initialize_vector_store():
 
         if es_client.indices.exists(index=current_index_name):
             logger.info("Índice existente encontrado. Carregando vector store...")
-            logger.info("NOTA: Para re-indexar com a nova lógica (geração de contexto), apague este índice no Elasticsearch.")
+            logger.info("NOTA: Para re-indexar o contexto global, apague este índice no Elasticsearch.")
             vector_store = ElasticsearchStore(
                 es_url=ELASTICSEARCH_URL,
                 index_name=current_index_name,
@@ -356,57 +519,45 @@ def initialize_vector_store():
             )
         else:
             logger.info(f"Índice '{current_index_name}' não encontrado. Criando novo...")
-            logger.info("Este processo envolve a geração de contexto por LLM e pode demorar.")
 
-            if not Path(document_path).exists():
-                raise FileNotFoundError(f"Documento não encontrado em {document_path}")
+            chunks = []
 
-            if DATA_SOURCE == "CSV":
-                # Carregar contexto geral primeiro para usar na geração de descrições
-                general_context_text = ""
+            if DATA_SOURCE == "CONTEXT":
+                # Carregar apenas o contexto geral do reservorio
                 if Path(DOCUMENT_PATH_CONTEXT).exists():
-                    logger.info("Carregando contexto geral para enriquecer descrições...")
-                    try:
-                        with open(DOCUMENT_PATH_CONTEXT, 'r', encoding='utf-8') as f:
-                            general_context_text = f.read().strip()
-                        logger.info(f"Contexto geral carregado ({len(general_context_text)} caracteres)")
-                    except Exception as e:
-                        logger.warning(f"Erro ao carregar contexto geral: {e}")
-                else:
-                    logger.warning(f"Arquivo de contexto geral não encontrado: {DOCUMENT_PATH_CONTEXT}")
-
-                # MODIFICADO: Criar um LLM *apenas* para o processo de ingestão
-                logger.info("Criando instância do LLM (Ollama) para geração de contexto...")
-                llm_ingestion = create_llm_model()
-
-                # MODIFICADO: Passar o LLM e contexto geral para o loader
-                chunks = load_and_chunk_csv(document_path, llm_ingestion, general_context_text)
-                logger.info(f"Geração de contexto finalizada. {len(chunks)} documentos criados.")
-
-                # Carregar contexto geral adicional como documentos separados para búsqueda
-                if Path(DOCUMENT_PATH_CONTEXT).exists() and general_context_text:
-                    logger.info("Adicionando contexto geral como documentos separados...")
+                    logger.info("Carregando contexto geral do reservorio...")
                     general_context_docs = load_general_context(DOCUMENT_PATH_CONTEXT)
                     chunks.extend(general_context_docs)
-                    logger.info(f"Contexto geral adicionado. Total de documentos: {len(chunks)}")
-            
-            # elif DATA_SOURCE == "PDF":
-            #     # Lógica de carregamento para PDF (Mantida)
-            #     loader = PyPDFLoader(document_path)
-            #     documents = loader.load()
-            #     text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
-            #     chunks = text_splitter.split_documents(documents)
-            #     logger.info(f"PDF dividido em {len(chunks)} chunks")
+                    logger.info(f"Contexto geral carregado: {len(general_context_docs)} seções.")
+                else:
+                    logger.warning(f"Arquivo de contexto geral não encontrado: {DOCUMENT_PATH_CONTEXT}")
+                    # Criar um documento padrão se não encontrar o arquivo
+                    default_context = Document(
+                        page_content="Este é um sistema RAG para engenharia de petróleo focado em reservatórios de poços petroleros. O sistema possui conhecimento geral sobre medições, pressões, temperaturas, vazões e status de válvulas em poços inteligentes.",
+                        metadata={"source": "default", "data_type": "contexto_geral"}
+                    )
+                    chunks.append(default_context)
 
-            # Criar vector store com embeddings
-            logger.info(f"Iniciando indexação de {len(chunks)} documentos no Elasticsearch...")
-            vector_store = ElasticsearchStore.from_documents(
-                documents=chunks,
-                embedding=embeddings,
-                es_url=ELASTICSEARCH_URL,
-                index_name=current_index_name
-            )
-            logger.info(f"Vector store criado e populado para o índice {current_index_name}")
+            elif DATA_SOURCE == "PDF":
+                # Lógica de carregamento para PDF (Mantida)
+                loader = PyPDFLoader(document_path)
+                documents = loader.load()
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200)
+                chunks = text_splitter.split_documents(documents)
+                logger.info(f"PDF dividido em {len(chunks)} chunks")
+
+            if chunks:
+                # Criar vector store com embeddings
+                logger.info(f"Iniciando indexação de {len(chunks)} documentos no Elasticsearch...")
+                vector_store = ElasticsearchStore.from_documents(
+                    documents=chunks,
+                    embedding=embeddings,
+                    es_url=ELASTICSEARCH_URL,
+                    index_name=current_index_name
+                )
+                logger.info(f"Vector store criado e populado para o índice {current_index_name}")
+            else:
+                raise ValueError("Nenhum documento para indexar")
 
         return vector_store
 
@@ -484,29 +635,95 @@ async def root():
 
 @app.post("/query", response_model=QueryResponse)
 async def query_document(request: QueryRequest):
-    """Consultar o documento usando RAG Híbrido."""
+    """Consultar usando RAG Híbrido com contexto global + tags específicos."""
     try:
         if qa_chain is None:
             raise HTTPException(status_code=500, detail="Sistema RAG não inicializado")
 
-        logger.info(f"Processando consulta HÍBRIDA: {request.question}")
-        
-        # O retriever híbrido buscará tanto pela semântica da pergunta
-        # (ex: "vazão de óleo na válvula superior")
-        # quanto pelas keywords (ex: "Qo", "ICV", "sup")
-        # contra o 'page_content' (Contexto Descritivo) que geramos.
-        
-        result = qa_chain({"query": request.question})
+        logger.info(f"Processando consulta com contexto duplo: {request.question}")
 
+        # =====================================================================
+        # ESTRATÉGIA HÍBRIDA: CONTEXTO GLOBAL + TAGS ESPECÍFICOS
+        # =====================================================================
+        # 1. Obter contexto global indexado (reservorio/poços petroleros)
+        # 2. Obter contexto específico de tags via API
+        # 3. Combinar ambos contextos para resposta final
+
+        # Primeiro: obter contexto de tags específico da pergunta
+        logger.info("Obtendo contexto específico de tags via API...")
+        llm_for_tags = create_llm_model()  # LLM para processar tags
+        tag_context = await get_tag_context_for_question(request.question, llm_for_tags)
+
+        # Segundo: obter contexto global via RAG tradicional
+        logger.info("Obtendo contexto global indexado...")
+        global_result = qa_chain({"query": request.question})
+
+        # Combinar contextos
+        combined_context = ""
+        if tag_context:
+            combined_context += f"CONTEXTO ESPECÍFICO DE TAGS:\n{tag_context}\n\n"
+        combined_context += f"CONTEXTO GLOBAL DO SISTEMA:\n{global_result.get('result', '')}"
+
+        # Preparar documentos fonte
         source_documents = []
-        for doc in result.get("source_documents", []):
+
+        # Adicionar documentos do contexto global
+        for doc in global_result.get("source_documents", []):
             source_documents.append({
-                "content_gerado": doc.page_content, # O contexto que o LLM gerou
-                "metadata": doc.metadata # Onde está o tag_literal e outros dados
+                "content_gerado": doc.page_content,
+                "metadata": doc.metadata,
+                "tipo_contexto": "global_indexado"
             })
 
+        # Adicionar contexto de tags como documento adicional
+        if tag_context:
+            source_documents.append({
+                "content_gerado": tag_context,
+                "metadata": {"tipo_contexto": "tags_api", "fonte": "API de tags"},
+                "tipo_contexto": "tags_especificos"
+            })
+
+        # Template de prompt modificado para contexto duplo
+        final_prompt_template = """Você é um assistente RAG especialista em engenharia de petróleo focado em reservatórios de poços petroleros.
+
+INSTRUÇÕES IMPORTANTES:
+- Use ambos os contextos fornecidos (global e específico de tags) para formular sua resposta
+- Priorize informações específicas de tags quando relevantes para a pergunta
+- Use o contexto global para explicar conceitos gerais e terminologia técnica
+- Seja preciso e cite fontes quando possível
+- Responda em português
+
+CONTEXTO DISPONÍVEL:
+{context}
+
+PERGUNTA: {question}
+
+RESPOSTA TÉCNICA DETALHADA:"""
+
+        final_prompt = PromptTemplate(
+            template=final_prompt_template,
+            input_variables=["context", "question"]
+        )
+
+        # Criar cadeia final com contexto combinado
+        final_chain = RetrievalQA.from_chain_type(
+            llm=create_llm_model(),
+            chain_type="stuff",
+            retriever=qa_chain.retriever,  # Mesmo retriever para contexto global
+            chain_type_kwargs={"prompt": final_prompt},
+            return_source_documents=True
+        )
+
+        # Resposta final com contexto combinado
+        final_result = final_chain({
+            "query": request.question,
+            "context": combined_context
+        })
+
+        logger.info(f"Consulta processada com sucesso. Contexto combinado: {len(combined_context)} caracteres")
+
         return QueryResponse(
-            answer=result["result"],
+            answer=final_result["result"],
             source_documents=source_documents
         )
 

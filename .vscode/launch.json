@@ -13,7 +13,10 @@
                 "app.main:app",
                 "--reload"
             ],
-            "jinja": true
+            "jinja": true,
+            "env": {
+                "OLLAMA_BASE_URL": "http://192.168.1.35:11434"
+            }
         }
     ]
 }
