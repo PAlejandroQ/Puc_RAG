@@ -16,7 +16,7 @@ Accept: application/json
 }
 
 
-### Query document using RAG
+### Query document using RAG(CURRENT)
 POST http://localhost:8000/query
 Content-Type: application/json
 Accept: application/json
@@ -31,5 +31,97 @@ Content-Type: application/json
 Accept: application/json
 
 {
-  "question": "Preciso das Tags de status das válvulas."
+  "question": "Preciso das Tags de status das valvulas de injecao"
+}
+
+
+
+### 1. Pergunta sobre Pressões e Agrupamento
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Quais são os níveis de pressão que são monitorados no PDG Anular do poço POCO_MRO_003, e a qual grupamento eles pertencem?"
+}
+
+### 2. Pergunta sobre Variáveis da Zona Inferior
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Além das pressões, que outra variável é medida na Zona Inferior do PDG Anular e qual é o seu Tag?"
+}
+
+### 3. Pergunta sobre Agrupamento de Temperaturas
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Sob qual grupamento se encontram as variáveis de temperatura para o poço POCO_MRO_003?"
+}
+
+### 4. Pergunta sobre Status Específico
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "A variável POCO_MRO_003_SCM_IWIS_MA3_P indica o status de qual componente e em qual localização específica dentro do poço?"
+}
+
+### 5. Pergunta sobre Vazões (Caudais) do Seeker
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Quais são os tipos de fluidos cuja vazão é monitorada pelo Seeker (TC-SOL-SEEKER)?"
+}
+
+### 6. Pergunta sobre Válvula e Grupamento
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Qual é a descrição completa da variável POCO_MRO_003_SCM_IWIS_MA_05_STATUS e a qual grupamento ela pertence?"
+}
+
+### 7. Pergunta sobre Status de Válvula por NomeVariavel
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Qual é a variável que indica o Status de Abertura da válvula ICV?"
+}
+
+### 8. Pergunta sobre Pressão de Linha de Controle
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "A Pressão da Linha de Controle da ICV da Zona Inferior (CI1) corresponde a qual nomeVariavel?"
+}
+
+### 9. Pergunta de Relação (Status de Coluna)
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Existe alguma variável de status de PDG coluna para a Zona Superior e, se sim, qual é o seu TAG?"
+}
+
+### 10. Pergunta de Detalhe e Resumo de Grupamento
+POST http://localhost:8000/query
+Content-Type: application/json
+Accept: application/json
+
+{
+  "question": "Qual é o grupamento que inclui informação sobre as Pressões e Vazões nas Linhas de controle e quais são as válvulas para as quais a pressão de sua linha de controle é registrada?"
 }
